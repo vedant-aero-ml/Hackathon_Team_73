@@ -159,7 +159,7 @@ with st.expander("ℹ️ Status rules", expanded=False):
     )
 
 # ── All vendors table ─────────────────────────────────────────────────────────
-st.subheader(f"📋 Vendor Master Data ({result.total_rows} vendors)")
+st.subheader(f"📋 Business Partner Data ({result.total_rows} vendors)")
 
 df_full = st.session_state["vendor_df"]
 df_display = df_full.copy()
