@@ -50,17 +50,17 @@ class ChatAgent:
         "DATAFRAME COLUMNS:\n{columns}\n\n"
         "SAMPLE DATA (first 3 rows — for column name and format reference ONLY):\n"
         "{sample_rows}\n\n"
-        "ALL SUPPLIER IDs IN THE DATASET:\n{supplier_ids}\n\n"
+        "ALL BUSINESS PARTNER IDs IN THE DATASET:\n{supplier_ids}\n\n"
         "RULES — follow strictly:\n"
         "1. Return ONLY a single valid Python expression. No imports. No assignments. No markdown. No explanation.\n"
         "2. The expression must use the variable `df`.\n"
-        "3. For single-value lookups: use .values[0] — e.g. df[df['Supplier ID']=='SUP001']['Name'].values[0]\n"
+        "3. For single-value lookups: use .values[0] — e.g. df[df['Business Partner']=='BP001']['Name'].values[0]\n"
         "4. For lists or tables: return a filtered DataFrame or Series.\n"
         "5. For counts: use len() or .value_counts().\n"
         "6. Column names are case-sensitive. Use exact column names from the list above.\n"
         "7. The sample data shows only 3 rows. The full dataset has many more rows — always query `df` directly.\n"
         "8. ONLY return CANNOT_ANSWER if the question asks about a column that does not exist in the column list above.\n"
-        "   Never return CANNOT_ANSWER just because a Supplier ID is not visible in the sample rows.\n"
+        "   Never return CANNOT_ANSWER just because a Business Partner ID is not visible in the sample rows.\n"
     )
 
     # ── WRITE: code generation ────────────────────────────────────────────────
@@ -68,13 +68,13 @@ class ChatAgent:
     WRITE_CODE_GEN_PROMPT: str = (
         "You are a pandas code generator for DATA UPDATES. A pandas DataFrame called `df` is available.\n\n"
         "DATAFRAME COLUMNS:\n{columns}\n\n"
-        "ALL SUPPLIER IDs IN THE DATASET:\n{supplier_ids}\n\n"
+        "ALL BUSINESS PARTNER IDs IN THE DATASET:\n{supplier_ids}\n\n"
         "RULES — follow strictly:\n"
         "1. Generate a single Python statement that updates df in-place. No imports. No markdown. No explanation.\n"
         "2. Use df.loc to target the exact row and column.\n"
-        "   Example: df.loc[df['Supplier ID'] == 'SUP087', 'GDPR'] = 'GDPR-2026-06'\n"
+        "   Example: df.loc[df['Business Partner'] == 'BP087', 'GDPR'] = 'GDPR-2026-06'\n"
         "3. Only update columns that exist in the column list above.\n"
-        "4. Only update rows where Supplier ID matches exactly as listed above.\n"
+        "4. Only update rows where Business Partner matches exactly as listed above.\n"
         "5. Do not generate any other statements.\n"
         "6. If the update cannot be performed because the column does not exist, return exactly: CANNOT_UPDATE\n"
     )
@@ -97,7 +97,7 @@ class ChatAgent:
         "The user requested a data update and it was successfully applied to the dataset. "
         "Write a short, friendly confirmation message (1-2 sentences) telling the user what was changed.\n\n"
         "RULES:\n"
-        "1. Be specific — mention the Supplier ID, field, and new value from the user's request.\n"
+        "1. Be specific — mention the Business Partner ID, field, and new value from the user's request.\n"
         "2. If the Status of the vendor changed as a result, mention the new Status.\n"
         "3. Do not invent information not present in the updated row provided.\n"
     )
@@ -150,7 +150,7 @@ class ChatAgent:
 
         if code.strip().upper().startswith("CANNOT_UPDATE"):
             return ChatResult(
-                reply="I couldn't perform that update. Please check the column name and Supplier ID.",
+                reply="I couldn't perform that update. Please check the column name and Business Partner ID.",
                 updated_df=None,
             )
 
@@ -165,11 +165,15 @@ class ChatAgent:
         # Verify something actually changed
         if df_copy.equals(df):
             return ChatResult(
-                reply="No matching vendor was found for that update. Please check the Supplier ID.",
+                reply="No matching vendor was found for that update. Please check the Business Partner ID.",
                 updated_df=None,
             )
 
+        # Capture which rows changed BEFORE recompute_status touches Status/Reason
+        changed_indices = self._find_changed_rows(df, df_copy)
+
         df_copy = self._recompute_status(df_copy)
+        self._stamp_audit_fields(df_copy, changed_indices)
         reply = self._confirm_update(user_message, df_copy)
         return ChatResult(reply=reply, updated_df=df_copy)
 
@@ -197,7 +201,7 @@ class ChatAgent:
     def _generate_read_code(self, user_message: str, df: pd.DataFrame) -> str:
         columns = "\n".join(f"  - {c}" for c in df.columns.tolist())
         sample_rows = df.head(3).to_string(index=False)
-        supplier_ids = ", ".join(df["Supplier ID"].astype(str).tolist()) if "Supplier ID" in df.columns else "N/A"
+        supplier_ids = ", ".join(df["Business Partner"].astype(str).tolist()) if "Business Partner" in df.columns else "N/A"
 
         system_prompt = self.READ_CODE_GEN_PROMPT.format(
             columns=columns, sample_rows=sample_rows, supplier_ids=supplier_ids
@@ -221,7 +225,7 @@ class ChatAgent:
 
     def _generate_write_code(self, user_message: str, df: pd.DataFrame) -> str:
         columns = "\n".join(f"  - {c}" for c in df.columns.tolist())
-        supplier_ids = ", ".join(df["Supplier ID"].astype(str).tolist()) if "Supplier ID" in df.columns else "N/A"
+        supplier_ids = ", ".join(df["Business Partner"].astype(str).tolist()) if "Business Partner" in df.columns else "N/A"
 
         system_prompt = self.WRITE_CODE_GEN_PROMPT.format(
             columns=columns, supplier_ids=supplier_ids
@@ -264,6 +268,37 @@ class ChatAgent:
                 df.at[i, "Status"] = "PENDING"
                 df.at[i, "Reason"] = "Missing ECCN"
         return df
+
+    def _find_changed_rows(self, original_df: pd.DataFrame, updated_df: pd.DataFrame) -> list:
+        """Return index labels of rows that differ between original and updated df.
+        Uses fillna to treat NaN==NaN as equal."""
+        sentinel = "__NA__"
+        orig_filled = original_df.fillna(sentinel)
+        upd_filled = updated_df.fillna(sentinel)
+        changed_mask = ~upd_filled.eq(orig_filled).all(axis=1)
+        return updated_df.index[changed_mask].tolist()
+
+    def _stamp_audit_fields(self, updated_df: pd.DataFrame, changed_indices: list) -> None:
+        """Set Modify Date and Last Modified By on the specified rows."""
+        import datetime
+        if not changed_indices:
+            return
+        today = datetime.date.today().strftime("%d%m%Y")
+
+        # Build a case-insensitive + whitespace-normalised map of actual column names
+        col_map = {c.strip().lower(): c for c in updated_df.columns}
+        modify_col = col_map.get("modify date")
+        modified_by_col = col_map.get("last modified by")
+
+        # Cast both audit columns to object dtype so strings can be assigned
+        for col in filter(None, [modify_col, modified_by_col]):
+            updated_df[col] = updated_df[col].astype(object)
+
+        for i in changed_indices:
+            if modify_col:
+                updated_df.at[i, modify_col] = today
+            if modified_by_col:
+                updated_df.at[i, modified_by_col] = "I12345"
 
     def _confirm_update(self, user_message: str, df: pd.DataFrame) -> str:
         """Format a confirmation message for a successful update."""
