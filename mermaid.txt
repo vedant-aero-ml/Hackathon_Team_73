@@ -1,0 +1,32 @@
+```mermaid
+flowchart TD
+    U([👤 User\nUpload .xlsx / .csv]):::user
+
+    U --> EPA
+
+    EPA[Excel Processing Agent\nClassify ACTIVE · PENDING · INACTIVE]:::agent
+    EPA --> RPT[📊 Report\nMetrics · Issues · Download]:::report
+
+    RPT --> IC{Intent\nClassifier}:::decision
+
+    IC -->|READ| EVAL[Eval Pandas\nOn Real df]:::read
+    IC -->|WRITE| EXEC[Exec Pandas\nOn df Copy]:::write
+
+    EVAL --> FMT[Format Agent\nRaw Result → Natural Language]:::agent
+    EXEC --> RS[Recompute\nStatus & Reason]:::write
+    RS --> CFM[Confirm Agent\nChat Reply]:::agent
+    CFM --> SYNC[(Session State\nUpdated)]:::store
+    SYNC --> RPT
+
+    FMT --> OUT([💬 Chat Reply]):::user
+    CFM --> OUT
+    SYNC --> DL[⬇️ Download CSV]:::report
+
+    classDef user     fill:#0a6ed1,stroke:#0854a0,color:#fff
+    classDef agent    fill:#e8f1fb,stroke:#0a6ed1,color:#0a3060
+    classDef report   fill:#eaf6ea,stroke:#3a9e3a,color:#1a4d1a
+    classDef read     fill:#fff8e1,stroke:#f0a500,color:#5a3e00
+    classDef write    fill:#fdecea,stroke:#d32f2f,color:#7a1010
+    classDef decision fill:#f3e8ff,stroke:#7b1fa2,color:#3a005a
+    classDef store    fill:#e8f1fb,stroke:#0854a0,color:#0a3060
+```
