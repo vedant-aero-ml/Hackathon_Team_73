@@ -96,33 +96,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Column legend ─────────────────────────────────────────────────────────────
-with st.expander("ℹ️ Status rules", expanded=False):
-    st.markdown(
-        """
-| Status | Condition | Reason |
-|--------|-----------|--------|
-| ✅ **ACTIVE** | Both GDPR **and** ECCN present | — |
-| ⏳ **PENDING** | One of GDPR / ECCN missing | Missing GDPR *or* Missing ECCN |
-| ❌ **INACTIVE** | Both GDPR **and** ECCN missing | Both missing |
-
-*A value is treated as missing if it is blank, whitespace-only, or null.*
-        """
-    )
-
-# ── Sample file download ──────────────────────────────────────────────────────
-sample_path = os.path.join(os.path.dirname(__file__), "data", "sample_vendors.xlsx")
-if os.path.exists(sample_path):
-    with open(sample_path, "rb") as _f:
-        st.download_button(
-            "⬇️ Download sample Excel file",
-            data=_f.read(),
-            file_name="sample_vendors.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
-st.divider()
-
 # ── File upload ───────────────────────────────────────────────────────────────
 uploaded = st.file_uploader(
     "Upload vendor master (.xlsx / .csv)",
@@ -131,7 +104,7 @@ uploaded = st.file_uploader(
 )
 
 if uploaded is None:
-    st.info("Upload an Excel file above to get started.", icon="⬆️")
+    st.info("Upload an Excel or CSV file above to get started.", icon="⬆️")
     st.stop()
 
 # ── Session-state init / file-change detection ────────────────────────────────
@@ -169,22 +142,27 @@ m2.metric("✅ Active", result.active_count)
 m3.metric("⏳ Pending", result.pending_count)
 m4.metric("❌ Inactive", result.inactive_count)
 
-issues_count = result.pending_count + result.inactive_count
-if issues_count == 0:
-    st.success("All vendors are ACTIVE — no issues found.", icon="✅")
-
 st.divider()
 
-# ── Rows with issues ──────────────────────────────────────────────────────────
-st.subheader(f"⚠️ Rows with issues ({issues_count})")
+# ── Status rules ──────────────────────────────────────────────────────────────
+with st.expander("ℹ️ Status rules", expanded=False):
+    st.markdown(
+        """
+| Status | Condition | Reason |
+|--------|-----------|--------|
+| ✅ **ACTIVE** | Both GDPR **and** ECCN present | — |
+| ⏳ **PENDING** | One of GDPR / ECCN missing | Missing GDPR *or* Missing ECCN |
+| ❌ **INACTIVE** | Both GDPR **and** ECCN missing | Both missing |
 
-# Rebuild a filtered DataFrame from the preview records
-df_all = pd.DataFrame(result.preview_records)
+*A value is treated as missing if it is blank, whitespace-only, or null.*
+        """
+    )
 
-# The preview is capped at 50; for a full issue list re-process the file.
-# Since we already have the processed bytes, read them back.
+# ── All vendors table ─────────────────────────────────────────────────────────
+st.subheader(f"📋 Vendor Master Data ({result.total_rows} vendors)")
+
 df_full = st.session_state["vendor_df"]
-df_issues = df_full[df_full["Status"].isin(["INACTIVE", "PENDING"])].copy()
+df_display = df_full.copy()
 
 # Highlight function
 _STATUS_COLORS = {
@@ -201,9 +179,9 @@ def _highlight_missing(val) -> str:
     return ""
 
 styled = (
-    df_issues.style
+    df_display.style
     .map(_highlight_status, subset=["Status"])
-    .map(_highlight_missing, subset=[c for c in ["GDPR", "ECCN"] if c in df_issues.columns])
+    .map(_highlight_missing, subset=[c for c in ["GDPR", "ECCN"] if c in df_display.columns])
 )
 
 st.dataframe(styled, use_container_width=True, hide_index=True)
