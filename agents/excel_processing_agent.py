@@ -25,7 +25,7 @@ class ExcelProcessingAgent:
     """
 
     REQUIRED_COLUMNS: list[str] = [
-        "Supplier ID",
+        "Business Partner",
         "Name",
         "GDPR",
         "ECCN",
